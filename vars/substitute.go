@@ -1,4 +1,4 @@
-// Package vars substitutes {{{{name}} references with literal values before a
+// Package vars substitutes {{name}} references with literal values before a
 // command string reaches the shell.
 //
 // The point of the substitution is to remove nested quoting: a value travels
@@ -24,29 +24,29 @@ func ValidateName(name string) bool {
 	return namePattern.MatchString(name)
 }
 
-// Substitute replaces every {{{{name}} reference in s with values[name].
+// Substitute replaces every {{name}} reference in s with values[name].
 //
 // The contract is fail-closed: a reference whose name has no value is an
 // error, because silently passing the braces through to the shell is how a
-// missing value turns into a quoting accident. {{{{{{{{ is the escape for a
-// literal {{{{; }} outside a reference is literal already.
+// missing value turns into a quoting accident. {{{{ is the escape for a
+// literal {{; }} outside a reference is literal already.
 func Substitute(s string, values map[string]string) (string, error) {
 	var b strings.Builder
 	for i := 0; i < len(s); {
 		rest := s[i:]
-		if strings.HasPrefix(rest, "{{{{{{{{") {
-			b.WriteString("{{{{")
+		if strings.HasPrefix(rest, "{{{{") {
+			b.WriteString("{{")
 			i += 4
 			continue
 		}
-		if !strings.HasPrefix(rest, "{{{{") {
+		if !strings.HasPrefix(rest, "{{") {
 			b.WriteByte(s[i])
 			i++
 			continue
 		}
 		end := strings.Index(rest[2:], "}}")
 		if end < 0 {
-			return "", fmt.Errorf("unterminated {{{{ in template at offset %d: %q; close the reference with }} or escape a literal {{{{ as {{{{{{{{", i, rest)
+			return "", fmt.Errorf("unterminated {{ in template at offset %d: %q; close the reference with }} or escape a literal {{ as {{{{", i, rest)
 		}
 		name := rest[2 : 2+end]
 		if !ValidateName(name) {
@@ -73,5 +73,5 @@ func referenceError(template string, name string, values map[string]string, prob
 	if len(known) > 0 {
 		knownText = strings.Join(known, ", ")
 	}
-	return fmt.Errorf("template reference {{{{%s}} %s. Known variables: %s. Pass the value in vars (or reference a secret_handle by its name); write {{{{{{{{ for a literal {{{{. Template: %q", name, problem, knownText, template)
+	return fmt.Errorf("template reference {{%s}} %s. Known variables: %s. Pass the value in vars (or reference a secret_handle by its name); write {{{{ for a literal {{. Template: %q", name, problem, knownText, template)
 }
