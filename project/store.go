@@ -20,15 +20,14 @@ type Store struct {
 	root string
 }
 
-// NewStore creates a project store rooted at root or ~/.mcp-ai-helper.
+// NewStore creates a project store rooted at root. The root is explicit
+// host state: an empty root is a configuration error, not a silent default
+// into a host-specific directory.
 func NewStore(root string) (*Store, error) {
-	if root == "" {
-		home, err := os.UserHomeDir()
-		if err != nil {
-			return nil, err
-		}
-		root = filepath.Join(home, defaultRootDirName)
-	} else if strings.HasPrefix(root, "~/") {
+	if strings.TrimSpace(root) == "" {
+		return nil, errors.New("project store root is required")
+	}
+	if strings.HasPrefix(root, "~/") {
 		home, err := os.UserHomeDir()
 		if err != nil {
 			return nil, err
@@ -61,7 +60,7 @@ func Name(repoPath string) (string, error) {
 	return base + "-" + hex.EncodeToString(sum[:4]), nil
 }
 
-// RepoDir returns ~/.mcp-ai-helper/repos/<project>.
+// RepoDir returns <root>/repos/<project>.
 func (s *Store) RepoDir(repoPath string) (string, error) {
 	name, err := Name(repoPath)
 	if err != nil {

@@ -207,7 +207,7 @@ func NewRunnerWithMask(policy config.CommandPolicy, mask *security.Mask) *Runner
 	}
 	history, err := NewHistory(HistoryPolicy{Dir: policy.LogDir, RetentionDays: policy.LogRetentionDays, MaxRecords: policy.LogMaxRecords, Compress: policy.LogCompress})
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "mcp-ai-helper: command history from %q: %v; falling back to in-memory\n", policy.LogDir, err)
+		fmt.Fprintf(os.Stderr, "command history from %q: %v; falling back to in-memory\n", policy.LogDir, err)
 		history = NewInMemoryHistory()
 	}
 	return &Runner{policy: policy, history: history, baseMask: mask}
@@ -241,6 +241,9 @@ func (r *Runner) runFilteredWithWait(
 ) (Result, error) {
 	if strings.TrimSpace(cmd) == "" {
 		return Result{}, errors.New("command is required")
+	}
+	if err := rejectProtectedCommand(cmd, r.policy); err != nil {
+		return Result{}, err
 	}
 	runCWD, err := r.safeCWD(cwd)
 	if err != nil {
@@ -617,10 +620,7 @@ func (r *Runner) RunFilteredInRepoWithWait(ctx context.Context, cmd string, repo
 	if strings.TrimSpace(cmd) == "" {
 		return Result{}, errors.New("command is required")
 	}
-	if err := rejectProtectedConfigCommand(cmd, r.policy.ProtectedConfigPath); err != nil {
-		return Result{}, err
-	}
-	if err := rejectProtectedLeanCommand(cmd); err != nil {
+	if err := rejectProtectedCommand(cmd, r.policy); err != nil {
 		return Result{}, err
 	}
 	if err := rejectShellSourceWrite(cmd, repoPath); err != nil {
@@ -787,52 +787,40 @@ func (r *Runner) Abort(commandID string) (AbortResult, error) {
 	}
 }
 
-const protectedLeanCommandMessage = "policy_denied: command appears to access protected task registry source; this is a local command denial, not a global task blocker; use task tools or exclude protected registry files"
-
 // The denial has to name a way forward that exists. Full replacement was
 // removed deliberately, so pointing at config_replace left the caller with a
 // guard it could not satisfy and a tool it could not call.
-const protectedConfigCommandMessage = "current helper config cannot be read or edited from pipeline/command tools; inspect it with config action=read, set an allowlisted scalar with config action=option_set/config action=option_reset, and for any other field report needs_user_action and ask the user to edit it, then call config action=reload"
+// neutralDenyMessage is the host-neutral remediation text used when the
+// policy supplies none: it names no host actions, because what a denied
+// command should do instead is the embedding host's knowledge.
+const neutralDenyMessage = "command denied: it references a protected path or marker of the embedding host; perform the change through the host's policy-approved interfaces"
 
-func rejectProtectedConfigCommand(cmd string, protectedPath string) error {
-	normalized := normalizeCommandPath(cmd)
-	for _, marker := range protectedConfigMarkers(protectedPath) {
-		if marker != "" && strings.Contains(normalized, marker) {
-			return fmt.Errorf("%s: command references %q", protectedConfigCommandMessage, marker)
+// rejectProtectedCommand denies commands that reference the policy's
+// protected config path or markers. Everything protected is policy state:
+// the shared package contributes no paths or markers of its own.
+func rejectProtectedCommand(cmd string, policy config.CommandPolicy) error {
+	markers := make([]string, 0, 1+len(policy.ProtectedMarkers))
+	if strings.TrimSpace(policy.ProtectedConfigPath) != "" {
+		markers = append(markers, normalizeCommandPath(policy.ProtectedConfigPath))
+	}
+	for _, marker := range policy.ProtectedMarkers {
+		if strings.TrimSpace(marker) == "" {
+			continue
 		}
+		markers = append(markers, normalizeCommandPath(marker))
 	}
-	return nil
-}
-
-func protectedConfigMarkers(protectedPath string) []string {
-	if strings.TrimSpace(protectedPath) == "" {
-		protectedPath = config.DefaultConfigPath()
+	if len(markers) == 0 {
+		return nil
 	}
-	return []string{
-		normalizeCommandPath(protectedPath),
-		normalizeCommandPath(config.DefaultConfigPath()),
-		"~/.mcp-ai-helper/config.yaml",
-		".mcp-ai-helper/config.yaml",
-	}
-}
-
-func rejectProtectedLeanCommand(cmd string) error {
 	normalized := normalizeCommandPath(cmd)
-	for _, marker := range protectedLeanCommandMarkers(normalized) {
-		return fmt.Errorf("%s: command references %q", protectedLeanCommandMessage, marker)
+	message := policy.DenyMessage
+	if message == "" {
+		message = neutralDenyMessage
 	}
-	return nil
-}
-
-func protectedLeanCommandMarkers(normalized string) []string {
-	if strings.Contains(normalized, "mcpaihelperproject/activetasks.lean") {
-		return []string{"mcpaihelperproject/activetasks.lean"}
-	}
-	if strings.Contains(normalized, "mcpaihelperproject/taskregistry") && strings.Contains(normalized, ".lean") {
-		return []string{"mcpaihelperproject/taskregistry*.lean"}
-	}
-	if strings.Contains(normalized, "tasks/") && strings.Contains(normalized, ".lean") {
-		return []string{"tasks/*.lean"}
+	for _, marker := range markers {
+		if strings.Contains(normalized, marker) {
+			return fmt.Errorf("%s: command references %q", message, marker)
+		}
 	}
 	return nil
 }

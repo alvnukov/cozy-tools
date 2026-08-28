@@ -6,21 +6,6 @@ import (
 	"github.com/alvnukov/cozy-tools/security"
 )
 
-func TestDefaultConfigPathDefaultsEmpty(t *testing.T) {
-	if DefaultConfigPath() != "" {
-		t.Fatalf("DefaultConfigPath() = %q, want empty default", DefaultConfigPath())
-	}
-}
-
-func TestDefaultConfigPathHostOverride(t *testing.T) {
-	restore := DefaultConfigPathFn
-	defer func() { DefaultConfigPathFn = restore }()
-	DefaultConfigPathFn = func() string { return "/etc/host/config.yaml" }
-	if got := DefaultConfigPath(); got != "/etc/host/config.yaml" {
-		t.Fatalf("DefaultConfigPath() = %q, want /etc/host/config.yaml", got)
-	}
-}
-
 // fakeResolver proves the ValueResolver seam stays implementable by hosts:
 // a minimal adapter satisfies it without importing anything beyond the mask.
 type fakeResolver struct{}

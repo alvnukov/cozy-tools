@@ -91,9 +91,15 @@ type indexEntry struct {
 	IndexPath  string    `json:"-"`
 }
 
-// NewHistory creates a persistent command history under policy.Dir.
+// NewHistory creates a persistent command history under policy.Dir. An
+// unset or "~/"-relative Dir that resolves to empty means volatile history:
+// there is no host-namespaced default storage in the shared package, so a
+// host that wants persistence states where.
 func NewHistory(policy HistoryPolicy) (*History, error) {
 	policy = normalizeHistoryPolicy(policy)
+	if strings.TrimSpace(policy.Dir) == "" {
+		return NewInMemoryHistory(), nil
+	}
 	projects, err := project.NewStore(policy.Dir)
 	if err != nil {
 		return nil, err
@@ -925,16 +931,6 @@ func evidenceFromLines(lines []string) ([]evidence.Line, bool) {
 }
 
 func normalizeHistoryPolicy(policy HistoryPolicy) HistoryPolicy {
-	home, homeErr := os.UserHomeDir()
-	if policy.Dir == "" {
-		if homeErr == nil {
-			policy.Dir = filepath.Join(home, ".mcp-ai-helper")
-		} else {
-			policy.Dir = filepath.Join(".", ".mcp-ai-helper")
-		}
-	} else if strings.HasPrefix(policy.Dir, "~/") && homeErr == nil {
-		policy.Dir = filepath.Join(home, strings.TrimPrefix(policy.Dir, "~/"))
-	}
 	if policy.RetentionDays <= 0 {
 		policy.RetentionDays = defaultRetentionDays
 	}

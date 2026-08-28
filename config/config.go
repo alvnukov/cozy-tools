@@ -20,6 +20,15 @@ type CommandPolicy struct {
 	LogMaxRecords         int      `yaml:"log_max_records" json:"log_max_records"`
 	LogCompress           bool     `yaml:"log_compress" json:"log_compress"`
 	ProtectedConfigPath   string   `yaml:"-" json:"-"`
+	// ProtectedMarkers are additional substrings that deny a command that
+	// references them. They carry whatever the embedding host considers
+	// untouchable state; the shared package contributes no markers of its
+	// own.
+	ProtectedMarkers []string `yaml:"-" json:"-"`
+	// DenyMessage overrides the remediation text of protected-path
+	// denials. Empty uses a host-neutral default that names no host
+	// actions.
+	DenyMessage string `yaml:"-" json:"-"`
 }
 
 // ResolvedValues carries the merged value channels for one execution: vars
@@ -38,9 +47,7 @@ type ValueResolver interface {
 	ResolveValues(handles []string, explicitVars map[string]string, explicitEnv map[string]string) (ResolvedValues, error)
 }
 
-// DefaultConfigPathFn is host-overridable: a host with a config file points it
-// there so command denials can protect that path. Empty means no default.
-var DefaultConfigPathFn = func() string { return "" }
-
-// DefaultConfigPath reports the host-configured protected config path.
-func DefaultConfigPath() string { return DefaultConfigPathFn() }
+// CommandPolicy is pure data: hosts construct it from their own
+// configuration layer and own every host-specific string in it. There is no
+// package-level default path or mutable override hook: two runners built
+// from two policies deny and report independently.

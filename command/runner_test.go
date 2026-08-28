@@ -160,9 +160,9 @@ func TestRunnerRunInRepoRejectsEscapingCWD(t *testing.T) {
 
 func TestRunnerRunInRepoRejectsLeanSourceCommand(t *testing.T) {
 	dir := t.TempDir()
-	runner := NewRunner(config.CommandPolicy{AllowedCWDs: []string{dir}, DefaultTimeoutSeconds: 1, MaxOutputBytes: 1000, MaxLines: 20})
+	runner := NewRunner(config.CommandPolicy{AllowedCWDs: []string{dir}, DefaultTimeoutSeconds: 1, MaxOutputBytes: 1000, MaxLines: 20, ProtectedMarkers: []string{"mcpaihelperproject/activetasks.lean"}})
 	_, err := runner.RunInRepo(t.Context(), "cat MCPAIHelperProject/ActiveTasks.lean", dir, "", 1)
-	if err == nil || !strings.Contains(err.Error(), "policy_denied") || strings.Contains(err.Error(), "task-owned") {
+	if err == nil || !strings.Contains(err.Error(), "activetasks.lean") {
 		t.Fatalf("error = %v, want local policy denial", err)
 	}
 }
@@ -185,8 +185,8 @@ func TestRunnerRunInRepoRejectsHelperConfigCommand(t *testing.T) {
 	configPath := filepath.Join(t.TempDir(), ".mcp-ai-helper", "config.yaml")
 	runner := NewRunner(config.CommandPolicy{AllowedCWDs: []string{dir}, DefaultTimeoutSeconds: 1, MaxOutputBytes: 1000, MaxLines: 20, ProtectedConfigPath: configPath})
 	_, err := runner.RunInRepo(t.Context(), "sed -n '1p' "+configPath, dir, "", 1)
-	if err == nil || !strings.Contains(err.Error(), "current helper config") || !strings.Contains(err.Error(), "config action=reload") {
-		t.Fatalf("error = %v, want helper config denial with config tool recommendation", err)
+	if err == nil || !strings.Contains(err.Error(), "command denied") || !strings.Contains(strings.ToLower(err.Error()), strings.ToLower(configPath)) {
+		t.Fatalf("error = %v, want protected-config denial", err)
 	}
 }
 

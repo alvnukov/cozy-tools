@@ -33,13 +33,14 @@ func TestTrustModelShellSourceGuardIsAdvisory(t *testing.T) {
 }
 
 func TestTrustModelProtectedConfigGuardIsAdvisory(t *testing.T) {
-	direct := "cat ~/.mcp-ai-helper/config.yaml"
-	if err := rejectProtectedConfigCommand(direct, ""); err == nil {
+	policy := config.CommandPolicy{ProtectedConfigPath: "/etc/host/config.yaml"}
+	direct := "cat /etc/host/config.yaml"
+	if err := rejectProtectedCommand(direct, policy); err == nil {
 		t.Fatal("direct protected-config reference must be denied")
 	}
 
-	indirect := "d=~/.mcp-ai-helper; cat $d/config.yaml"
-	if err := rejectProtectedConfigCommand(indirect, ""); err != nil {
+	indirect := "d=/etc/host; cat $d/config.yaml"
+	if err := rejectProtectedCommand(indirect, policy); err != nil {
 		t.Fatalf("guard must stay advisory; the documented contract allows indirect reads: %v", err)
 	}
 }
