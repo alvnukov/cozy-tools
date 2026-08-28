@@ -1,6 +1,8 @@
 package filesystem
 
 import (
+	"github.com/alvnukov/cozy-tools/safefs"
+
 	"context"
 	"errors"
 	"os"
@@ -19,6 +21,7 @@ type openConfig struct {
 // optimistic guards observe a consistent in-process snapshot.
 type Service struct {
 	root    *os.Root
+	writer  *safefs.Root
 	limits  Limits
 	mu      sync.RWMutex
 	closed  bool
@@ -43,7 +46,16 @@ func Open(rootPath string, options ...Option) (*Service, error) {
 	if err != nil {
 		return nil, classifyError("open", rootPath, err)
 	}
-	return &Service{root: root, limits: config.limits}, nil
+	// Atomic replacement is owned by safefs: the service opens the same
+	// directory as a safefs.Root and delegates every write installation to
+	// the one authoritative implementation instead of keeping a parallel
+	// temp/rename dance of its own.
+	writer, err := safefs.Open(rootPath)
+	if err != nil {
+		_ = root.Close()
+		return nil, classifyError("open", rootPath, err)
+	}
+	return &Service{root: root, writer: writer, limits: config.limits}, nil
 }
 
 // Close releases the confined root. It is safe to call more than once.
@@ -57,6 +69,7 @@ func (s *Service) Close() error {
 		return nil
 	}
 	s.closed = true
+	_ = s.writer.Close()
 	if err := s.root.Close(); err != nil {
 		return classifyError("close", "", err)
 	}

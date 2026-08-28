@@ -1,6 +1,8 @@
 package filesystem
 
 import (
+	"github.com/alvnukov/cozy-tools/safefs"
+
 	"bytes"
 	"context"
 	"crypto/rand"
@@ -162,73 +164,14 @@ func matchExpected(name, actual, expected string) error {
 }
 
 func (s *Service) atomicWrite(ctx context.Context, name string, content []byte, permissions os.FileMode, exactMode, createOnly bool) error {
-	directory := path.Dir(name)
-	if err := s.root.MkdirAll(directory, 0o755); err != nil {
-		return rootError("mkdir", directory, err)
-	}
-	tempName, err := randomTempName(directory)
-	if err != nil {
-		return newError(CodeInternal, "write", name, "generate temporary name", err)
-	}
-	createMode := os.FileMode(0o600)
-	if !exactMode {
-		createMode = permissions
-	}
-	temp, err := s.root.OpenFile(tempName, os.O_RDWR|os.O_CREATE|os.O_EXCL, createMode)
-	if err != nil {
-		return rootError("write", tempName, err)
-	}
-	keepTemp := true
-	defer func() {
-		_ = temp.Close()
-		if keepTemp {
-			_ = s.root.Remove(tempName)
-		}
-	}()
-	finalMode := permissions
-	if !exactMode {
-		info, err := temp.Stat()
-		if err != nil {
-			return rootError("stat", tempName, err)
-		}
-		finalMode = preservedMode(info.Mode())
-		if err := temp.Chmod(0o600); err != nil {
-			return rootError("chmod", tempName, err)
-		}
-	}
-	if n, err := temp.Write(content); err != nil {
-		return rootError("write", tempName, err)
-	} else if n != len(content) {
-		return rootError("write", tempName, io.ErrShortWrite)
-	}
-	if err := temp.Chmod(finalMode); err != nil {
-		return rootError("chmod", tempName, err)
-	}
-	if err := temp.Sync(); err != nil {
-		return rootError("sync", tempName, err)
-	}
-	if err := temp.Close(); err != nil {
-		return rootError("close", tempName, err)
-	}
 	if err := checkContext(ctx); err != nil {
 		return err
 	}
-	if createOnly {
-		if err := s.root.Link(tempName, name); err != nil {
-			return rootError("link", name, err)
-		}
-		if err := s.root.Remove(tempName); err != nil {
-			return rootError("remove", tempName, err)
-		}
-		keepTemp = false
-	} else {
-		if err := s.root.Rename(tempName, name); err != nil {
-			return rootError("rename", name, err)
-		}
-		keepTemp = false
-	}
-	if err := s.syncDirectory(directory); err != nil {
-		return err
+	// Delegate to the file family's one authoritative atomic replacement;
+	// the service layer keeps only its error classification.
+	opts := safefs.WriteOptions{ExactMode: exactMode, CreateOnly: createOnly}
+	if err := s.writer.WriteFileAtomicOpts(name, content, permissions, opts); err != nil {
+		return rootError("write", name, err)
 	}
 	return nil
 }
