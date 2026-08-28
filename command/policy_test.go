@@ -51,7 +51,7 @@ func TestDefaultDenyMessageIsHostNeutral(t *testing.T) {
 	dir := t.TempDir()
 	protected := filepath.Join(dir, "protected.yaml")
 	runner := NewRunner(config.CommandPolicy{
-		AllowedCWDs:        []string{dir},
+		AllowedCWDs:         []string{dir},
 		ProtectedConfigPath: protected,
 	})
 

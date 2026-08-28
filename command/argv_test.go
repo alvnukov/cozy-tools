@@ -44,10 +44,10 @@ func TestRunArgvOptionLikeAndSubstitutionValuesStayData(t *testing.T) {
 	} {
 		result, err := runner.RunArgv(t.Context(), []string{"printf", "%s", hostile}, dir, 10)
 		if err != nil {
-		t.Fatalf("value %q: %v", hostile, err)
+			t.Fatalf("value %q: %v", hostile, err)
 		}
 		if joined := strings.Join(result.StdoutTail, "\n"); !strings.Contains(joined, hostile) {
-		t.Fatalf("value %q must stay data, got %q", hostile, joined)
+			t.Fatalf("value %q must stay data, got %q", hostile, joined)
 		}
 	}
 	if _, err := os.Stat(filepath.Join(dir, "pwned")); err == nil {

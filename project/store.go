@@ -11,8 +11,6 @@ import (
 	"strings"
 )
 
-const defaultRootDirName = ".mcp-ai-helper"
-
 var unsafeNameChars = regexp.MustCompile(`[^A-Za-z0-9._-]+`)
 
 // Store resolves helper data directories and repo-local task paths.
