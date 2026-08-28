@@ -21,8 +21,13 @@
 //     and secret handles land in the command string before the shell parses
 //     it, so a value containing quotes, semicolons, $( ) or backticks changes
 //     the parsed command. This raw channel is legacy: hosts that accept
-//     values from outside their trust boundary must not send them through it
-//     (see the migration contract in package vars);
+//     values from outside their trust boundary must use the injection-safe
+//     channels instead -- [Runner.RunArgv] (values as argv elements),
+//     [Exec.Env] (values as environment entries) and [Exec.Stdin] (values as
+//     piped data) never become shell source. Raw substitution stays
+//     available while it is being adopted, is documented as unsafe for
+//     untrusted values, and is removed or gated before the module's first
+//     stable version;
 //   - anything a started command reads: files, environment, network.
 //
 // # Guarantees

@@ -19,7 +19,8 @@
 // their trust boundary must not pass those values through Substitute. The
 // migration contract: an injection-safe channel, where the value travels as
 // an environment entry or an argv element and never becomes shell source, is
-// the supported path; raw substitution stays available while it is being
+// the supported path -- package command ships it as Runner.RunArgv, Exec.Env
+// and Exec.Stdin; raw substitution stays available while it is being
 // adopted, is documented as unsafe for untrusted values, and is removed or
 // gated before the module's first stable version.
 package vars

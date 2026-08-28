@@ -56,7 +56,17 @@ const execValuesKey contextKey = "exec_values"
 // piped to the process. Records keep the template as written, so substituted
 // secret values never reach history.
 type Exec struct {
-	Vars  map[string]string
+	// Vars are substituted into the command template before the shell
+	// parses it: the legacy raw channel, unsafe for values from outside
+	// the host's trust boundary (see the package trust model in doc.go).
+	Vars map[string]string
+	// Argv names the program and its arguments for injection-safe
+	// execution without a shell; set by Runner.RunArgv.
+	Argv []string
+	// Env carries per-execution environment entries to the process
+	// verbatim; values never become shell source.
+	Env map[string]string
+	// Stdin is piped to the process as data.
 	Stdin string
 }
 
@@ -326,9 +336,16 @@ func (r *Runner) executePrepared(ctx context.Context, commandID string, cmd stri
 		_ = r.history.UpdateRunningOutput(commandID, stdoutLines, stderrLines, combined, outputTruncated, hex.EncodeToString(sum[:]))
 	}
 	resolvedCmd := cmd
-	resolvedStdin := execFromContext(ctx).Stdin
-	if values := execFromContext(ctx).Vars; len(values) > 0 {
-		substituted, subErr := vars.Substitute(cmd, values)
+	execVals := execFromContext(ctx)
+	resolvedStdin := execVals.Stdin
+	if len(execVals.Argv) > 0 {
+		if len(execVals.Vars) > 0 {
+			safeErr := errors.New("argv execution does not support template variables; pass values as argv elements, environment entries, or stdin")
+			r.recordFailedPreparation(ctx, commandID, cmd, runCWD, repoPath, started, safeErr)
+			return Result{}, safeErr
+		}
+	} else if len(execVals.Vars) > 0 {
+		substituted, subErr := vars.Substitute(cmd, execVals.Vars)
 		if subErr != nil {
 			safeErr := errors.New(redactOutput(subErr.Error()))
 			r.recordFailedPreparation(ctx, commandID, cmd, runCWD, repoPath, started, safeErr)
@@ -336,7 +353,7 @@ func (r *Runner) executePrepared(ctx context.Context, commandID string, cmd stri
 		}
 		resolvedCmd = substituted
 		if resolvedStdin != "" {
-			substituted, subErr := vars.Substitute(resolvedStdin, values)
+			substituted, subErr := vars.Substitute(resolvedStdin, execVals.Vars)
 			if subErr != nil {
 				safeErr := errors.New(redactOutput(subErr.Error()))
 				r.recordFailedPreparation(ctx, commandID, cmd, runCWD, repoPath, started, safeErr)
@@ -346,12 +363,18 @@ func (r *Runner) executePrepared(ctx context.Context, commandID string, cmd stri
 		}
 	}
 	output = newTailOutput(r.policy.MaxOutputBytes, redactOutput, updateRunningOutput)
-	// #nosec G204 -- command execution is this package's explicit MCP capability and is constrained by cwd, timeout, and output policy.
-	command := exec.CommandContext(runCtx, shellBin(), shellArgs(resolvedCmd)...)
+	var command *exec.Cmd
+	if len(execVals.Argv) > 0 {
+		// #nosec G204 -- argv execution is this package's explicit capability; elements are data by construction and never reach a shell.
+		command = exec.CommandContext(runCtx, execVals.Argv[0], execVals.Argv[1:]...)
+	} else {
+		// #nosec G204 -- command execution is this package's explicit MCP capability and is constrained by cwd, timeout, and output policy.
+		command = exec.CommandContext(runCtx, shellBin(), shellArgs(resolvedCmd)...)
+	}
 	command.Dir = runCWD
 	termination := prepareCommandTermination(command)
-	if len(envs) > 0 {
-		command.Env = mergeEnv(os.Environ(), envs)
+	if len(envs) > 0 || len(execVals.Env) > 0 {
+		command.Env = mergeEnv(os.Environ(), envs, envSlice(execVals.Env))
 	}
 	if resolvedStdin != "" {
 		command.Stdin = strings.NewReader(resolvedStdin)

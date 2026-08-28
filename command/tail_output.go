@@ -39,13 +39,19 @@ type tailOutput struct {
 	update    func(stdoutText, stderrText string, truncated bool)
 }
 
-// newTailOutput creates a tail with the given total byte budget. A budget
-// below 1 retains nothing but still hashes everything. redact is applied
-// when snapshots are assembled; update, when set, is invoked after every
-// write with the current redacted per-stream tail and truncation flag.
+// defaultOutputBudget is the retention budget when the policy leaves
+// MaxOutputBytes unset, matching the buffer this type replaced.
+const defaultOutputBudget = 200000
+
+// newTailOutput creates a tail with the given total byte budget. An unset
+// or negative budget falls back to defaultOutputBudget; a budget of zero
+// cannot be expressed, so retention always holds the tail of at least the
+// default budget. redact is applied when snapshots are assembled; update,
+// when set, is invoked after every write with the current redacted
+// per-stream tail and truncation flag.
 func newTailOutput(budget int, redact func(string) string, update func(stdoutText, stderrText string, truncated bool)) *tailOutput {
-	if budget < 0 {
-		budget = 0
+	if budget <= 0 {
+		budget = defaultOutputBudget
 	}
 	if redact == nil {
 		redact = func(s string) string { return s }
