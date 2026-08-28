@@ -6,6 +6,22 @@
 // the command after JSON decoding but before the shell parses anything.
 // Substitution is literal — a value is never re-evaluated, and braces inside
 // a value are not substituted again.
+//
+// # Raw shell channel
+//
+// Because substitution happens before the shell parses the command, a value
+// is inserted as shell source, not as data: quotes, semicolons, $( ) and
+// backticks in a value change the command that runs. "Never re-evaluated"
+// means the value is not substituted again; it does not mean the shell
+// cannot interpret it.
+//
+// This is the legacy raw channel. Hosts that accept values from outside
+// their trust boundary must not pass those values through Substitute. The
+// migration contract: an injection-safe channel, where the value travels as
+// an environment entry or an argv element and never becomes shell source, is
+// the supported path; raw substitution stays available while it is being
+// adopted, is documented as unsafe for untrusted values, and is removed or
+// gated before the module's first stable version.
 package vars
 
 import (

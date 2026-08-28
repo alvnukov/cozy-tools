@@ -14,6 +14,9 @@ import (
 //
 // The denial names tools that exist. A guard that points at a missing tool does
 // not protect anything -- it just sends the caller to a different shell.
+//
+// All textual guards in this file are advisory policy, not a security
+// boundary; see the package trust model in doc.go for what that means.
 const shellSourceWriteMessage = "policy_denied: writing repository source through a shell command bypasses the guarded edit path; " +
 	"use file action=snapshot then edit action=replace to change a file, or edit action=write to create one"
 

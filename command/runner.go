@@ -1,4 +1,3 @@
-// Package command runs bounded local shell commands and extracts compact evidence.
 package command
 
 import (
