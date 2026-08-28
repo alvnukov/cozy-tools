@@ -3,6 +3,7 @@ package fileops
 import (
 	"bytes"
 	"fmt"
+	"io"
 	"io/fs"
 	"path"
 	"path/filepath"
@@ -212,7 +213,9 @@ func translateGlob(pattern string) string {
 			if strings.HasPrefix(class, "!") {
 				class = "^" + class[1:]
 			}
-			b.WriteString("[" + class + "]")
+			b.WriteByte('[')
+			b.WriteString(class)
+			b.WriteByte(']')
 			i += end + 1
 		case '\\':
 			if i+1 < len(pattern) {
@@ -390,8 +393,17 @@ func searchFilesAtRoot(displayPath string, root *safefs.Root, walkRoot string, o
 		if !excludeGlobs.empty() && excludeGlobs.matches(relative) {
 			return nil
 		}
-		data, readErr := root.ReadFile(filepath.FromSlash(entryPath))
-		if readErr != nil || len(data) > 1<<20 {
+		info, infoErr := d.Info()
+		if infoErr != nil || !info.Mode().IsRegular() || info.Size() > 1<<20 {
+			return nil
+		}
+		file, openErr := root.OpenFile(filepath.FromSlash(entryPath), 0, 0)
+		if openErr != nil {
+			return nil
+		}
+		data, readErr := io.ReadAll(io.LimitReader(file, (1<<20)+1))
+		closeErr := file.Close()
+		if readErr != nil || closeErr != nil || len(data) > 1<<20 {
 			return nil
 		}
 		// Binary by content, not by name: one NUL byte means the file is not

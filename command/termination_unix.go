@@ -84,8 +84,12 @@ func killCommandProcessGroup(command *exec.Cmd) error {
 // waitid option values differ per platform and live in the sibling
 // termination_waitid_*.go files.
 func waitProcessExitWithoutReap(pid int) error {
+	if pid <= 0 {
+		return syscall.EINVAL
+	}
 	var info [128]byte
 	for {
+		// #nosec G103 G115 -- waitid requires its positive pid and siginfo buffer as uintptr syscall arguments.
 		_, _, errno := syscall.Syscall6(
 			syscall.SYS_WAITID,
 			waitidTypePID,

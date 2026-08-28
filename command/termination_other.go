@@ -1,4 +1,4 @@
-//go:build !darwin && !linux && !windows
+//go:build !darwin && !linux && !windows && !plan9 && !js && !wasip1
 
 package command
 

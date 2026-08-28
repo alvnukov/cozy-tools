@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path"
 	"path/filepath"
@@ -494,6 +495,61 @@ const (
 	maxReadFilesTotalBytes = 128 * 1024
 )
 
+func readFileContentInRepoLimited(repoPath string, filePath string, maxBytes int) (FileContent, bool, error) {
+	scoped, err := openScopedFile(repoPath, filePath, false)
+	if err != nil {
+		return FileContent{}, false, err
+	}
+	defer scoped.close()
+
+	info, err := scoped.root.Stat(scoped.name)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return FileContent{Path: scoped.display, RepoPath: repoPath, RelativePath: scoped.relative, Exists: false}, false, nil
+		}
+		return FileContent{}, false, err
+	}
+	if !info.Mode().IsRegular() {
+		return FileContent{}, false, fmt.Errorf("%q is not a regular file", scoped.relative)
+	}
+	content := FileContent{
+		Path:         scoped.display,
+		RepoPath:     repoPath,
+		RelativePath: scoped.relative,
+		Size:         int(info.Size()),
+		Exists:       true,
+	}
+	if info.Size() > int64(maxBytes) {
+		return content, true, nil
+	}
+
+	file, err := scoped.root.OpenFile(scoped.name, os.O_RDONLY, 0)
+	if err != nil {
+		return FileContent{}, false, err
+	}
+	defer func() { _ = file.Close() }()
+	data, err := io.ReadAll(io.LimitReader(file, int64(maxBytes)+1))
+	if err != nil {
+		return FileContent{}, false, err
+	}
+	content.Size = len(data)
+	if len(data) > maxBytes {
+		return content, true, nil
+	}
+	text := string(data)
+	raw := strings.Split(strings.ReplaceAll(text, "\r\n", "\n"), "\n")
+	if len(raw) > 0 && raw[len(raw)-1] == "" {
+		raw = raw[:len(raw)-1]
+	}
+	content.Lines = make([]FileLine, 0, len(raw))
+	for i, line := range raw {
+		content.Lines = append(content.Lines, FileLine{Number: i + 1, Text: line})
+	}
+	content.Hash = Hash(data)
+	content.HashChunks = hashChunks(content.Hash)
+	return content, false, nil
+}
+
 // ReadFilesInRepo reads multiple repo-relative files with hard bounds.
 func ReadFilesInRepo(repoPath string, paths []string) (ReadFilesResult, error) {
 	if len(paths) == 0 {
@@ -513,7 +569,7 @@ func ReadFilesInRepo(repoPath string, paths []string) (ReadFilesResult, error) {
 	truncated := false
 
 	for _, path := range paths {
-		fc, err := ReadFileContentInRepo(repoPath, path)
+		fc, oversized, err := readFileContentInRepoLimited(repoPath, path, maxReadFileBytes)
 		if err != nil {
 			result.Files = append(result.Files, ReadFilesFileResult{
 				RelativePath: filepath.ToSlash(filepath.Clean(path)),
@@ -535,7 +591,7 @@ func ReadFilesInRepo(repoPath string, paths []string) (ReadFilesResult, error) {
 			continue
 		}
 
-		if fc.Size > maxReadFileBytes {
+		if oversized {
 			fr.Truncated = true
 			fr.OmittedReason = fmt.Sprintf("file size %d exceeds per-file limit %d", fc.Size, maxReadFileBytes)
 			result.Files = append(result.Files, fr)

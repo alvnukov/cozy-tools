@@ -104,6 +104,16 @@ func (r *Root) FullPath(name string) (string, error) {
 	return filepath.Join(r.path, clean), nil
 }
 
+// OpenFile opens a file without allowing symlink traversal outside the root.
+// The caller owns the returned file and must close it.
+func (r *Root) OpenFile(name string, flag int, perm fs.FileMode) (*os.File, error) {
+	clean, err := cleanRelative(name, false)
+	if err != nil {
+		return nil, err
+	}
+	return r.root.OpenFile(clean, flag, perm)
+}
+
 // ReadFile reads a file without allowing symlink traversal outside the root.
 func (r *Root) ReadFile(name string) ([]byte, error) {
 	clean, err := cleanRelative(name, false)

@@ -167,7 +167,7 @@ func CommitOwned(ctx context.Context, req CommitRequest) (CommitResult, error) {
 		trackedSet[file] = struct{}{}
 	}
 	if len(trackedFiles) > 0 {
-		updateArgs := append([]string{"add", "-u", "--"}, trackedFiles...)
+		updateArgs := append([]string{"add", "-u", "--"}, literalOwnedPathspecs(trackedFiles)...)
 		if _, err := runGit(ctx, repo, updateArgs...); err != nil {
 			return CommitResult{}, err
 		}
@@ -198,12 +198,12 @@ func CommitOwned(ctx context.Context, req CommitRequest) (CommitResult, error) {
 			}
 		}
 		if len(normal) > 0 {
-			if _, err := runGit(ctx, repo, append([]string{"add", "--"}, normal...)...); err != nil {
+			if _, err := runGit(ctx, repo, append([]string{"add", "--"}, literalOwnedPathspecs(normal)...)...); err != nil {
 				return CommitResult{}, err
 			}
 		}
 		if len(force) > 0 {
-			if _, err := runGit(ctx, repo, append([]string{"add", "-f", "--"}, force...)...); err != nil {
+			if _, err := runGit(ctx, repo, append([]string{"add", "-f", "--"}, literalOwnedPathspecs(force)...)...); err != nil {
 				return CommitResult{}, err
 			}
 		}

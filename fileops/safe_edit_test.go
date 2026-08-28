@@ -538,7 +538,7 @@ func TestSearchFilesMaxMatches(t *testing.T) {
 	dir := t.TempDir()
 	for i := range 5 {
 		name := filepath.Join(dir, fmt.Sprintf("f%d.go", i))
-		data := []byte(fmt.Sprintf("package p\nvar x%d = 1\nvar y%d = 2\n", i, i))
+		data := fmt.Appendf(nil, "package p\nvar x%d = 1\nvar y%d = 2\n", i, i)
 		if err := os.WriteFile(name, data, 0o600); err != nil {
 			t.Fatal(err)
 		}
@@ -559,7 +559,7 @@ func TestSearchFilesReportsTruncationAtCap(t *testing.T) {
 	dir := t.TempDir()
 	for i := range 5 {
 		name := filepath.Join(dir, fmt.Sprintf("f%d.go", i))
-		data := []byte(fmt.Sprintf("package p\nvar x%d = 1\nvar y%d = 2\n", i, i))
+		data := fmt.Appendf(nil, "package p\nvar x%d = 1\nvar y%d = 2\n", i, i)
 		if err := os.WriteFile(name, data, 0o600); err != nil {
 			t.Fatal(err)
 		}

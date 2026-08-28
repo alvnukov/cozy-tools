@@ -2,9 +2,11 @@ package command
 
 import (
 	"path/filepath"
+	"sync"
 	"testing"
 
 	"github.com/alvnukov/cozy-tools/config"
+	"github.com/alvnukov/cozy-tools/security"
 )
 
 func coordinatorTestPolicy(logDir string, cwd string) config.CommandPolicy {
@@ -129,4 +131,83 @@ func TestCoordinatorResolvesUnknownIDToBase(t *testing.T) {
 	if resolved := coordinator.Resolve("no-such-command"); resolved != base {
 		t.Fatal("an unknown command id must fall back to the base runner")
 	}
+}
+
+func TestCoordinatorRebuildsRunnerWhenMaskChanges(t *testing.T) {
+	repo := t.TempDir()
+	policy := coordinatorTestPolicy(filepath.Join(t.TempDir(), "repo"), repo)
+	coordinator := NewCoordinator(NewRunner(coordinatorTestPolicy(filepath.Join(t.TempDir(), "base"), t.TempDir())))
+
+	firstMask := security.NewMask()
+	firstMask.Add("old-secret")
+	first := coordinator.ForRepo(repo, policy, firstMask)
+
+	secondMask := security.NewMask()
+	secondMask.Add("new-secret")
+	second := coordinator.ForRepo(repo, policy, secondMask)
+	if second == first {
+		t.Fatal("a changed secret mask kept the stale repo runner")
+	}
+	if got := second.baseMask.Apply("new-secret"); got == "new-secret" {
+		t.Fatal("replacement runner does not redact the new secret")
+	}
+
+	equivalentMask := security.NewMask()
+	equivalentMask.Add("new-secret")
+	if got := coordinator.ForRepo(repo, policy, equivalentMask); got != second {
+		t.Fatal("an equivalent fresh mask rebuilt the repo runner")
+	}
+}
+
+func TestCoordinatorResetKeepsActiveRunnerReachable(t *testing.T) {
+	base := NewRunner(coordinatorTestPolicy(filepath.Join(t.TempDir(), "base"), t.TempDir()))
+	coordinator := NewCoordinator(base)
+	repo := t.TempDir()
+	repoRunner := coordinator.ForRepo(repo, coordinatorTestPolicy(filepath.Join(t.TempDir(), "repo"), repo), nil)
+	const commandID = "active-before-reset"
+	repoRunner.running.Store(commandID, activeCommand{})
+	t.Cleanup(func() { repoRunner.running.Delete(commandID) })
+
+	newBase := NewRunner(coordinatorTestPolicy(filepath.Join(t.TempDir(), "new-base"), t.TempDir()))
+	coordinator.Reset(newBase)
+	if resolved := coordinator.Resolve(commandID); resolved != repoRunner {
+		t.Fatal("Reset discarded the runner owning an active command")
+	}
+	if resolved := coordinator.Resolve("unknown-after-reset"); resolved != newBase {
+		t.Fatal("unknown ids must resolve to the new base after Reset")
+	}
+}
+
+func TestCoordinatorNilBaseIsSafe(t *testing.T) {
+	coordinator := NewCoordinator(nil)
+	if resolved := coordinator.Resolve("unknown"); resolved == nil {
+		t.Fatal("NewCoordinator(nil) left a nil base runner")
+	}
+	coordinator.Reset(nil)
+	if resolved := coordinator.Resolve("unknown-after-reset"); resolved == nil {
+		t.Fatal("Reset(nil) left a nil base runner")
+	}
+}
+
+func TestCoordinatorResolveConcurrentReset(t *testing.T) {
+	coordinator := NewCoordinator(nil)
+	base := NewRunner(config.CommandPolicy{})
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		for range 20 {
+			coordinator.Reset(base)
+		}
+	}()
+	go func() {
+		defer wg.Done()
+		for range 20 {
+			if coordinator.Resolve("unknown") == nil {
+				t.Error("Resolve returned nil during Reset")
+				return
+			}
+		}
+	}()
+	wg.Wait()
 }

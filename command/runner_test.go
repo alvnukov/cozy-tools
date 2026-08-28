@@ -3,6 +3,7 @@ package command
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -16,6 +17,22 @@ func TestRunnerRejectsCWDOutsidePolicy(t *testing.T) {
 	_, err := runner.Run(t.Context(), "echo ok", "/", 1)
 	if err == nil {
 		t.Fatal("expected cwd policy error")
+	}
+}
+
+func TestRunnerRejectsSymlinkCWDOutsidePolicy(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlink creation may require elevated privileges")
+	}
+	allowed := t.TempDir()
+	outside := t.TempDir()
+	link := filepath.Join(allowed, "escape")
+	if err := os.Symlink(outside, link); err != nil {
+		t.Fatal(err)
+	}
+	runner := NewRunner(config.CommandPolicy{AllowedCWDs: []string{allowed}, DefaultTimeoutSeconds: 1, MaxOutputBytes: 1000, MaxLines: 20})
+	if _, err := runner.Run(t.Context(), "pwd", link, 1); err == nil {
+		t.Fatal("symlink cwd escaping allowed_cwds was accepted")
 	}
 }
 

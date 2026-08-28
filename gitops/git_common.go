@@ -48,7 +48,7 @@ func normalizeOwnedFiles(files []string) ([]string, error) {
 		if clean == "" || clean == "." {
 			continue
 		}
-		if filepath.IsAbs(clean) || strings.HasPrefix(clean, "../") || clean == ".." {
+		if filepath.IsAbs(clean) || filepath.VolumeName(clean) != "" || strings.HasPrefix(clean, "../") || clean == ".." {
 			return nil, fmt.Errorf("owned file must be repo-relative: %q", file)
 		}
 		if _, ok := seen[clean]; ok {
@@ -60,6 +60,17 @@ func normalizeOwnedFiles(files []string) ([]string, error) {
 	return owned, nil
 }
 
+// literalOwnedPathspecs prevents a repository filename such as `:(glob)**`
+// from being interpreted as Git pathspec magic. The leading ./ is accepted by
+// check-ignore (which rejects Git's literal pathspec magic) and by add/ls-files.
+func literalOwnedPathspecs(files []string) []string {
+	literal := make([]string, len(files))
+	for i, file := range files {
+		literal[i] = "./" + file
+	}
+	return literal
+}
+
 func stagedFiles(ctx context.Context, repo string) ([]string, error) {
 	diff, err := runGit(ctx, repo, "diff", "--cached", "--name-only")
 	if err != nil {
@@ -69,7 +80,7 @@ func stagedFiles(ctx context.Context, repo string) ([]string, error) {
 }
 
 func trackedOwnedFiles(ctx context.Context, repo string, owned []string) ([]string, error) {
-	args := append([]string{"ls-files", "--"}, owned...)
+	args := append([]string{"ls-files", "--"}, literalOwnedPathspecs(owned)...)
 	out, err := runGit(ctx, repo, args...)
 	if err != nil {
 		return nil, err
@@ -81,14 +92,14 @@ func ignoredOwnedFiles(ctx context.Context, repo string, files []string) map[str
 	if len(files) == 0 {
 		return nil
 	}
-	args := append([]string{"check-ignore", "--"}, files...)
+	args := append([]string{"check-ignore", "--"}, literalOwnedPathspecs(files)...)
 	out, err := runGit(ctx, repo, args...)
 	if err != nil {
 		return nil
 	}
 	ignored := map[string]bool{}
 	for _, line := range splitLines(out) {
-		ignored[line] = true
+		ignored[strings.TrimPrefix(line, "./")] = true
 	}
 	return ignored
 }

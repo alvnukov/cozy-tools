@@ -331,15 +331,17 @@ func (r *Runner) executePrepared(ctx context.Context, commandID string, cmd stri
 	if values := execFromContext(ctx).Vars; len(values) > 0 {
 		substituted, subErr := vars.Substitute(cmd, values)
 		if subErr != nil {
-			r.recordFailedPreparation(ctx, commandID, cmd, runCWD, repoPath, started, subErr)
-			return Result{}, subErr
+			safeErr := errors.New(redactOutput(subErr.Error()))
+			r.recordFailedPreparation(ctx, commandID, cmd, runCWD, repoPath, started, safeErr)
+			return Result{}, safeErr
 		}
 		resolvedCmd = substituted
 		if resolvedStdin != "" {
 			substituted, subErr := vars.Substitute(resolvedStdin, values)
 			if subErr != nil {
-				r.recordFailedPreparation(ctx, commandID, cmd, runCWD, repoPath, started, subErr)
-				return Result{}, subErr
+				safeErr := errors.New(redactOutput(subErr.Error()))
+				r.recordFailedPreparation(ctx, commandID, cmd, runCWD, repoPath, started, safeErr)
+				return Result{}, safeErr
 			}
 			resolvedStdin = substituted
 		}
@@ -606,7 +608,7 @@ func (r *Runner) RunFilteredInRepoWithWait(ctx context.Context, cmd string, repo
 			return Result{}, errors.New("cwd must be repo-relative when repo_path is set")
 		}
 		runCWD = filepath.Join(repo, filepath.Clean(cwd))
-		if !insideDir(repo, runCWD) {
+		if !realInsideDir(repo, runCWD) {
 			return Result{}, fmt.Errorf("cwd %q escapes repo_path", cwd)
 		}
 	}
@@ -832,7 +834,19 @@ func resolveDir(path string) (string, error) {
 	if !info.IsDir() {
 		return "", fmt.Errorf("cwd %q is not a directory", abs)
 	}
-	return abs, nil
+	return filepath.Clean(abs), nil
+}
+
+func resolveRealDir(path string) (string, error) {
+	abs, err := resolveDir(path)
+	if err != nil {
+		return "", err
+	}
+	resolved, err := filepath.EvalSymlinks(abs)
+	if err != nil {
+		return "", err
+	}
+	return filepath.Clean(resolved), nil
 }
 
 func (r *Runner) safeCWD(cwd string) (string, error) {
@@ -841,16 +855,11 @@ func (r *Runner) safeCWD(cwd string) (string, error) {
 		return "", err
 	}
 	for _, allowed := range r.policy.AllowedCWDs {
-		var allowedAbs string
-		if filepath.IsAbs(allowed) {
-			allowedAbs, err = filepath.Abs(allowed)
-		} else {
-			allowedAbs, err = filepath.Abs(filepath.Join(abs, allowed))
+		allowedPath := allowed
+		if !filepath.IsAbs(allowedPath) {
+			allowedPath = filepath.Join(abs, allowedPath)
 		}
-		if err != nil {
-			continue
-		}
-		if abs == allowedAbs || strings.HasPrefix(abs, allowedAbs+string(os.PathSeparator)) {
+		if realInsideDir(allowedPath, abs) {
 			return abs, nil
 		}
 	}
@@ -866,7 +875,24 @@ func insideDir(root string, child string) bool {
 	if err != nil {
 		return false
 	}
-	return childAbs == rootAbs || strings.HasPrefix(childAbs, rootAbs+string(os.PathSeparator))
+	return relativePathInside(rootAbs, childAbs)
+}
+
+func realInsideDir(root string, child string) bool {
+	rootAbs, err := resolveRealDir(root)
+	if err != nil {
+		return false
+	}
+	childAbs, err := resolveRealDir(child)
+	if err != nil {
+		return false
+	}
+	return relativePathInside(rootAbs, childAbs)
+}
+
+func relativePathInside(root string, child string) bool {
+	rel, err := filepath.Rel(root, child)
+	return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(os.PathSeparator)) && !filepath.IsAbs(rel)
 }
 
 type liveOutput struct {

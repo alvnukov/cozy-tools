@@ -349,7 +349,7 @@ func TestSearchRegexLiteralContextBinaryAndBudgets(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer limited.Close()
+	defer func() { _ = limited.Close() }()
 	budgeted, err := limited.Search(context.Background(), filesystem.SearchRequest{Pattern: "hit", Literal: true})
 	if err != nil {
 		t.Fatal(err)

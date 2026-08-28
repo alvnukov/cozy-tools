@@ -30,6 +30,9 @@ type Coordinator struct {
 
 // NewCoordinator creates a coordinator over the base-policy runner.
 func NewCoordinator(base *Runner) *Coordinator {
+	if base == nil {
+		base = NewRunner(config.CommandPolicy{})
+	}
 	return &Coordinator{base: base, current: make(map[string]*Runner)}
 }
 
@@ -41,7 +44,7 @@ func (c *Coordinator) ForRepo(repoPath string, policy config.CommandPolicy, mask
 	key := filepath.Clean(repoPath)
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if runner, ok := c.current[key]; ok && reflect.DeepEqual(runner.policy, policy) {
+	if runner, ok := c.current[key]; ok && reflect.DeepEqual(runner.policy, policy) && runner.baseMask.Equal(mask) {
 		return runner
 	}
 	runner := NewRunnerWithMask(policy, mask)
@@ -52,15 +55,28 @@ func (c *Coordinator) ForRepo(repoPath string, policy config.CommandPolicy, mask
 	return runner
 }
 
-// Reset swaps the base runner and drops the per-repo registry, whose
-// effective policies derive from the previous server config. It belongs to
-// config reload.
+// Reset swaps the base runner and retires the previous registry, whose
+// effective policies derive from the previous server config. Retired runners
+// remain reachable for commands that were active during config reload.
 func (c *Coordinator) Reset(base *Runner) {
+	if base == nil {
+		base = NewRunner(config.CommandPolicy{})
+	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
+
+	retired := make([]*Runner, 0, 1+len(c.current)+len(c.retired))
+	if c.base != nil {
+		retired = append(retired, c.base)
+	}
+	for _, runner := range c.current {
+		retired = append(retired, runner)
+	}
+	retired = append(retired, c.retired...)
+
 	c.base = base
 	c.current = make(map[string]*Runner)
-	c.retired = nil
+	c.retired = retired
 }
 
 // Resolve returns the runner that owns commandID: the one tracking it as an
@@ -79,7 +95,7 @@ func (c *Coordinator) Resolve(commandID string) *Runner {
 			return runner
 		}
 	}
-	return c.base
+	return runners[0]
 }
 
 // snapshot copies the resolution order under one lock: base first, then the

@@ -35,3 +35,31 @@ func TestMask_NoSecrets(t *testing.T) {
 		t.Errorf("got %q", got)
 	}
 }
+
+func TestMask_ApplyOverlappingSecretsLongestFirst(t *testing.T) {
+	m := NewMask()
+	m.Add("secret")
+	m.AddNamed("TOKEN", "secret-token")
+	if got := m.Apply("value=secret-token"); got != "value=[HELPER_SECRET:TOKEN]" {
+		t.Fatalf("got %q; shorter secret exposed part of the longer secret", got)
+	}
+}
+
+func TestMask_EqualIgnoresInsertionOrder(t *testing.T) {
+	first := NewMask()
+	first.AddNamed("A", "first-secret")
+	first.AddNamed("B", "second-secret")
+	second := NewMask()
+	second.AddNamed("B", "second-secret")
+	second.AddNamed("A", "first-secret")
+	if !first.Equal(second) {
+		t.Fatal("masks with the same secrets are not equal")
+	}
+	second.Add("third-secret")
+	if first.Equal(second) {
+		t.Fatal("masks with different secrets are equal")
+	}
+	if !((*Mask)(nil)).Equal(NewMask()) {
+		t.Fatal("nil and empty masks should be equivalent")
+	}
+}

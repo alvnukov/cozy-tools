@@ -655,7 +655,7 @@ func (h *History) indexPaths() ([]string, error) {
 	legacy := filepath.Join(h.root, "logs", "index.jsonl")
 	if _, err := os.Stat(legacy); err == nil {
 		paths = append(paths, legacy)
-	} else if err != nil && !errors.Is(err, os.ErrNotExist) {
+	} else if !errors.Is(err, os.ErrNotExist) {
 		return nil, fmt.Errorf("stat legacy command log index: %w", err)
 	}
 	return paths, nil
@@ -689,7 +689,11 @@ func readEntriesFile(indexPath string) ([]indexEntry, error) {
 					return nil, fmt.Errorf("decode command log index: %w", err)
 				}
 				entry.IndexPath = indexPath
-				entry.File = normalizeRecordPath(indexPath, entry.File)
+				recordPath, err := normalizeRecordPath(indexPath, entry.File)
+				if err != nil {
+					return nil, fmt.Errorf("decode command log index: %w", err)
+				}
+				entry.File = recordPath
 				entries = append(entries, entry)
 			}
 		}
@@ -703,11 +707,24 @@ func readEntriesFile(indexPath string) ([]indexEntry, error) {
 	return entries, nil
 }
 
-func normalizeRecordPath(indexPath string, recordPath string) string {
-	if filepath.IsAbs(recordPath) {
-		return recordPath
+func normalizeRecordPath(indexPath string, recordPath string) (string, error) {
+	if strings.TrimSpace(recordPath) == "" {
+		return "", errors.New("command log record path is empty")
 	}
-	return filepath.Join(filepath.Dir(indexPath), filepath.FromSlash(recordPath))
+	candidate := filepath.FromSlash(recordPath)
+	if !filepath.IsAbs(candidate) {
+		candidate = filepath.Join(filepath.Dir(indexPath), candidate)
+	}
+	candidate = filepath.Clean(candidate)
+	recordsDir := filepath.Join(filepath.Dir(indexPath), "records")
+	relative, err := filepath.Rel(recordsDir, candidate)
+	if err != nil || relative == "." || relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) || filepath.Dir(relative) != "." {
+		return "", fmt.Errorf("command log record path escapes records directory: %q", recordPath)
+	}
+	if !strings.HasSuffix(relative, ".json") && !strings.HasSuffix(relative, ".json.gz") {
+		return "", fmt.Errorf("command log record has unsupported extension: %q", recordPath)
+	}
+	return candidate, nil
 }
 
 func appendIndexEntry(path string, entry indexEntry) error {
@@ -747,12 +764,17 @@ func rewriteIndexes(oldEntries []indexEntry, keptEntries []indexEntry) error {
 }
 
 func rewriteIndex(path string, entries []indexEntry) error {
-	tmpPath := path + ".tmp"
-	// #nosec G304 -- tmpPath is derived from the configured command log index path.
-	file, err := os.OpenFile(tmpPath, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o600)
+	file, err := os.CreateTemp(filepath.Dir(path), "."+filepath.Base(path)+".*.tmp")
 	if err != nil {
 		return fmt.Errorf("open temporary command log index: %w", err)
 	}
+	tmpPath := file.Name()
+	removeTemp := true
+	defer func() {
+		if removeTemp {
+			_ = os.Remove(tmpPath)
+		}
+	}()
 	for _, entry := range entries {
 		entry.IndexPath = ""
 		data, err := json.Marshal(entry)
@@ -765,12 +787,17 @@ func rewriteIndex(path string, entries []indexEntry) error {
 			return fmt.Errorf("write temporary command log index: %w", err)
 		}
 	}
+	if err := file.Sync(); err != nil {
+		_ = file.Close()
+		return fmt.Errorf("sync temporary command log index: %w", err)
+	}
 	if err := file.Close(); err != nil {
 		return fmt.Errorf("close temporary command log index: %w", err)
 	}
 	if err := os.Rename(tmpPath, path); err != nil {
 		return fmt.Errorf("replace command log index: %w", err)
 	}
+	removeTemp = false
 	return nil
 }
 
@@ -800,8 +827,10 @@ func writeJSONRecord(path string, record Record, compress bool) error {
 	return nil
 }
 
+const maxHistoryRecordBytes = 16 << 20
+
 func readJSONRecord(path string) (Record, error) {
-	// #nosec G304 -- path is read from our own command log index under the configured log directory.
+	// #nosec G304 -- path is validated against the command log records directory before this call.
 	file, err := os.Open(path)
 	if err != nil {
 		return Record{}, fmt.Errorf("open command log record: %w", err)
@@ -809,9 +838,7 @@ func readJSONRecord(path string) (Record, error) {
 	defer func() {
 		_ = file.Close()
 	}()
-	var reader interface {
-		Read([]byte) (int, error)
-	} = file
+	var reader io.Reader = file
 	if strings.HasSuffix(path, ".gz") {
 		gzipReader, err := gzip.NewReader(file)
 		if err != nil {
@@ -822,8 +849,15 @@ func readJSONRecord(path string) (Record, error) {
 		}()
 		reader = gzipReader
 	}
+	data, err := io.ReadAll(io.LimitReader(reader, maxHistoryRecordBytes+1))
+	if err != nil {
+		return Record{}, fmt.Errorf("read command log record: %w", err)
+	}
+	if len(data) > maxHistoryRecordBytes {
+		return Record{}, fmt.Errorf("command log record exceeds %d byte limit", maxHistoryRecordBytes)
+	}
 	var record Record
-	if err := json.NewDecoder(reader).Decode(&record); err != nil {
+	if err := json.Unmarshal(data, &record); err != nil {
 		return Record{}, fmt.Errorf("decode command log record: %w", err)
 	}
 	return record, nil

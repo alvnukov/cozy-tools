@@ -4,7 +4,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"path/filepath"
 	"time"
 )
 
@@ -58,9 +57,18 @@ func acquireIndexLock(root string) (*indexLock, error) {
 	if err := os.MkdirAll(root, 0o700); err != nil {
 		return nil, fmt.Errorf("create command log root: %w", err)
 	}
-	file, err := os.OpenFile(filepath.Join(root, indexLockName), os.O_CREATE|os.O_RDWR, 0o600)
+	rootFS, err := os.OpenRoot(root)
+	if err != nil {
+		return nil, fmt.Errorf("open command log root: %w", err)
+	}
+	file, err := rootFS.OpenFile(indexLockName, os.O_CREATE|os.O_RDWR, 0o600)
+	closeRootErr := rootFS.Close()
 	if err != nil {
 		return nil, fmt.Errorf("open command log lock file: %w", err)
+	}
+	if closeRootErr != nil {
+		_ = file.Close()
+		return nil, fmt.Errorf("close command log root: %w", closeRootErr)
 	}
 	deadline := time.Now().Add(indexLockWait)
 	for {

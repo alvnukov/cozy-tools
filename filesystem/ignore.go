@@ -24,7 +24,7 @@ func (s *Service) loadIgnoreMatcher() ignoreMatcher {
 	if err != nil {
 		return ignoreMatcher{}
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 	reader := bufio.NewReader(io.LimitReader(file, 1<<20))
 	var matcher ignoreMatcher
 	for len(matcher.rules) < 10_000 {
