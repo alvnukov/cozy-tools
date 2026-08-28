@@ -317,12 +317,12 @@ func (r *Runner) executePrepared(ctx context.Context, commandID string, cmd stri
 		}
 		return out
 	}
+	var output *tailOutput
 	updateRunningOutput := func(stdoutText string, stderrText string, outputTruncated bool) {
-		stdoutLines := normalizeLines(redactOutput(stdoutText))
-		stderrLines := normalizeLines(redactOutput(stderrText))
-		combined := append([]string{}, stdoutLines...)
-		combined = append(combined, stderrLines...)
-		sum := sha256.Sum256([]byte(strings.Join(stdoutLines, "\n") + "\n" + strings.Join(stderrLines, "\n")))
+		stdoutLines := normalizeLines(stdoutText)
+		stderrLines := normalizeLines(stderrText)
+		combined := normalizeLines(output.combinedText())
+		sum := output.currentSum()
 		_ = r.history.UpdateRunningOutput(commandID, stdoutLines, stderrLines, combined, outputTruncated, hex.EncodeToString(sum[:]))
 	}
 	resolvedCmd := cmd
@@ -345,7 +345,7 @@ func (r *Runner) executePrepared(ctx context.Context, commandID string, cmd stri
 			resolvedStdin = substituted
 		}
 	}
-	output := newLiveOutput(r.policy.MaxOutputBytes, updateRunningOutput)
+	output = newTailOutput(r.policy.MaxOutputBytes, redactOutput, updateRunningOutput)
 	// #nosec G204 -- command execution is this package's explicit MCP capability and is constrained by cwd, timeout, and output policy.
 	command := exec.CommandContext(runCtx, shellBin(), shellArgs(resolvedCmd)...)
 	command.Dir = runCWD
@@ -398,15 +398,21 @@ func (r *Runner) executePrepared(ctx context.Context, commandID string, cmd stri
 	if executionError != "" {
 		stderrLines = append(stderrLines, executionError)
 	}
-	combined := append([]string{}, stdoutLines...)
-	combined = append(combined, stderrLines...)
+	// Combined keeps the order the bytes actually arrived across both
+	// streams, so evidence reads in the order the command produced it.
+	combined := normalizeLines(output.combinedText())
+	if executionError != "" {
+		combined = append(combined, executionError)
+	}
 	evidenceLines := combined
 	truncatedLines := false
 	if len(evidenceLines) > r.policy.MaxLines {
 		truncatedLines = true
 		evidenceLines = tailN(evidenceLines, r.policy.MaxLines)
 	}
-	sum := sha256.Sum256([]byte(stdoutText + "\n" + stderrText))
+	// The hash covers the complete output of both streams, not just the
+	// retained tail, so identical runs hash identically whatever the budget.
+	sum := output.finalSum()
 	filteredLines, filterTruncated, err := applyFilter(combined, filter)
 	if err != nil {
 		return Result{}, err
