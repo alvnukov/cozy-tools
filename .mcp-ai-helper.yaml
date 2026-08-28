@@ -1,0 +1,4 @@
+task_registry:
+    backend: obsidian
+    obsidian:
+        path: obsidian-tasks
