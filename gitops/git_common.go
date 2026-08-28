@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -11,11 +12,26 @@ import (
 )
 
 func runGit(ctx context.Context, repo string, args ...string) (string, error) {
+	return runGitEnvPlain(ctx, repo, nil, args...)
+}
+
+// runGitPlain runs git without isolated-index redirection, even inside a
+// transaction context. It is for plumbing that must observe or resolve the
+// repository itself (git dir, HEAD) rather than the transaction index.
+func runGitPlain(ctx context.Context, repo string, args ...string) (string, error) {
+	return runGitEnvPlain(ctx, repo, nil, args...)
+}
+
+func runGitEnvPlain(ctx context.Context, repo string, extraEnv []string, args ...string) (string, error) {
 	runCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	// #nosec G204 -- the executable is fixed to git and arguments are passed directly without a shell.
 	cmd := exec.CommandContext(runCtx, "git", args...)
 	cmd.Dir = repo
+	if idx, ok := isolatedIndex(ctx); ok && !hasGitIndexFile(extraEnv) {
+		extraEnv = append(extraEnv, "GIT_INDEX_FILE="+idx)
+	}
+	cmd.Env = append(os.Environ(), extraEnv...)
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
 	cmd.Stdout = &stdout
@@ -24,6 +40,26 @@ func runGit(ctx context.Context, repo string, args ...string) (string, error) {
 		return "", fmt.Errorf("git %s: %w: %s", strings.Join(args, " "), err, strings.TrimSpace(stderr.String()))
 	}
 	return stdout.String(), nil
+}
+
+func hasGitIndexFile(env []string) bool {
+	for _, kv := range env {
+		if strings.HasPrefix(kv, "GIT_INDEX_FILE=") {
+			return true
+		}
+	}
+	return false
+}
+
+// runGitIn runs a git invocation inside a guarded commit transaction,
+// directing it at the isolated index so that what it stages or commits cannot
+// be observed or changed through the real index.
+func runGitIn(ctx context.Context, repo string, args ...string) (string, error) {
+	idx, ok := isolatedIndex(ctx)
+	if !ok {
+		return runGitEnvPlain(ctx, repo, nil, args...)
+	}
+	return runGitEnvPlain(ctx, repo, []string{"GIT_INDEX_FILE=" + idx}, args...)
 }
 
 func splitLines(text string) []string {
