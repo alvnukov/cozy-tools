@@ -24,6 +24,22 @@ const (
 	defaultMaxRecords    = 2000
 )
 
+// History persistence is bounded on both ends: whatever Put accepts must be
+// readable back under the same caps, and index parsing never allocates past
+// a documented per-entry and total-read budget.
+const (
+	// maxIndexLineBytes bounds one JSONL row of the command log index. A row
+	// embeds the full command string, so this is also the effective command
+	// length budget for any command whose history is retained.
+	maxIndexLineBytes = 1 << 20
+	// maxIndexTotalBytes bounds how many bytes of one index file a reader
+	// will consume before failing.
+	maxIndexTotalBytes = 64 << 20
+	// maxHistoryRecordBytes bounds one retained record; records written at
+	// or under this size are guaranteed to be readable back.
+	maxHistoryRecordBytes = 16 << 20
+)
+
 // HistoryPolicy controls command log persistence and cleanup.
 type HistoryPolicy struct {
 	Dir           string `yaml:"dir" json:"dir"`
@@ -122,6 +138,18 @@ func (h *History) Put(record Record) error {
 	logsDir, projectName, err := h.logsDir(record.RepoPath)
 	if err != nil {
 		return err
+	}
+
+	// Reject what could not be read back, before anything is written: a
+	// record over the hard cap would persist as a permanently unreadable
+	// ghost. The check runs on the marshaled JSON so field overhead is
+	// accounted for exactly once.
+	recordData, err := json.Marshal(record)
+	if err != nil {
+		return fmt.Errorf("encode command log record: %w", err)
+	}
+	if len(recordData) > maxHistoryRecordBytes {
+		return fmt.Errorf("command log record exceeds %d byte limit", maxHistoryRecordBytes)
 	}
 	recordsDir := filepath.Join(logsDir, "records")
 	if err := os.MkdirAll(recordsDir, 0o700); err != nil {
@@ -662,6 +690,14 @@ func (h *History) indexPaths() ([]string, error) {
 }
 
 func readEntriesFile(indexPath string) ([]indexEntry, error) {
+	return readEntriesFileBounded(indexPath, maxIndexLineBytes, maxIndexTotalBytes)
+}
+
+// readEntriesFileBounded parses one JSONL index under explicit per-line and
+// total-read budgets. Line assembly stops as soon as the budget is exceeded,
+// so a corrupt or hostile index cannot make the reader allocate an
+// arbitrarily long line.
+func readEntriesFileBounded(indexPath string, lineCap, totalCap int64) ([]indexEntry, error) {
 	// #nosec G304 -- indexPath is discovered under the configured helper log root.
 	file, err := os.Open(indexPath)
 	if err != nil {
@@ -670,16 +706,18 @@ func readEntriesFile(indexPath string) ([]indexEntry, error) {
 		}
 		return nil, fmt.Errorf("open command log index: %w", err)
 	}
-	defer func() {
-		_ = file.Close()
-	}()
+	defer func() { _ = file.Close() }()
+	counter := &countingReader{r: file}
+	reader := bufio.NewReaderSize(counter, 64<<10)
 	var entries []indexEntry
-	// Put embeds the full command string in each line, so lines have no
-	// size ceiling; bufio.Reader grows past the Scanner's 64KB token limit.
-	reader := bufio.NewReader(file)
+	var line []byte
 	for {
-		line, readErr := reader.ReadBytes('\n')
-		if len(line) > 0 {
+		chunk, readErr := reader.ReadSlice('\n')
+		line = append(line, chunk...)
+		if int64(len(line)) > lineCap {
+			return nil, fmt.Errorf("decode command log index: line exceeds %d byte limit", lineCap)
+		}
+		if readErr == nil || errors.Is(readErr, io.EOF) {
 			if idx := bytes.LastIndexByte(line, '\n'); idx >= 0 {
 				line = line[:idx]
 			}
@@ -696,15 +734,33 @@ func readEntriesFile(indexPath string) ([]indexEntry, error) {
 				entry.File = recordPath
 				entries = append(entries, entry)
 			}
-		}
-		if readErr != nil {
+			line = line[:0]
 			if errors.Is(readErr, io.EOF) {
 				break
 			}
-			return nil, fmt.Errorf("scan command log index: %w", readErr)
+			continue
 		}
+		if errors.Is(readErr, bufio.ErrBufferFull) {
+			continue
+		}
+		return nil, fmt.Errorf("scan command log index: %w", readErr)
+	}
+	if counter.n > totalCap {
+		return nil, fmt.Errorf("scan command log index: total read exceeds %d byte limit", totalCap)
 	}
 	return entries, nil
+}
+
+// countingReader counts the bytes consumed from r.
+type countingReader struct {
+	r io.Reader
+	n int64
+}
+
+func (c *countingReader) Read(p []byte) (int, error) {
+	n, err := c.r.Read(p)
+	c.n += int64(n)
+	return n, err
 }
 
 func normalizeRecordPath(indexPath string, recordPath string) (string, error) {
@@ -740,6 +796,9 @@ func appendIndexEntry(path string, entry indexEntry) error {
 	data, err := json.Marshal(entry)
 	if err != nil {
 		return err
+	}
+	if len(data)+1 > maxIndexLineBytes {
+		return fmt.Errorf("command log index entry exceeds %d byte limit", maxIndexLineBytes)
 	}
 	if _, err := file.Write(append(data, '\n')); err != nil {
 		return fmt.Errorf("write command log index: %w", err)
@@ -826,8 +885,6 @@ func writeJSONRecord(path string, record Record, compress bool) error {
 	}
 	return nil
 }
-
-const maxHistoryRecordBytes = 16 << 20
 
 func readJSONRecord(path string) (Record, error) {
 	// #nosec G304 -- path is validated against the command log records directory before this call.
