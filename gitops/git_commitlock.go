@@ -9,7 +9,6 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
 )
 
@@ -23,7 +22,7 @@ func (t *lockToken) release() {
 	if t == nil || t.file == nil {
 		return
 	}
-	_ = syscall.Flock(int(t.file.Fd()), syscall.LOCK_UN)
+	_ = unlockFile(t.file)
 	_ = t.file.Close()
 	if mu, ok := commitLockMutexes.Load(t.path); ok {
 		mu.(*sync.Mutex).Unlock()
@@ -55,11 +54,11 @@ func acquireCommitLock(ctx context.Context, gitDir string) (*lockToken, error) {
 	waitCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	for {
-		err = syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB)
+		err = lockFileExclusive(f)
 		if err == nil {
 			return &lockToken{file: f, path: lockPath}, nil
 		}
-		if !errors.Is(err, syscall.EWOULDBLOCK) && !errors.Is(err, syscall.EINTR) {
+		if !isLockRetryable(err) {
 			_ = f.Close()
 			mu.(*sync.Mutex).Unlock()
 			return nil, fmt.Errorf("acquire commit lock: %w", err)

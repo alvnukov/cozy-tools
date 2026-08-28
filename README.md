@@ -48,3 +48,5 @@ mcp-ai-helper's `internal/cozybridge` for the reference adapter.
 During migration mcp-ai-helper pins cozy-tools with a local replace
 directive; remove the replace (and require a tagged version) before release.
 Run `go test ./...` in this repository as the gate for library changes.
+Pre-v1 API stability classes, the release verification matrix, and the
+replace-removal migration procedure are in [RELEASE.md](RELEASE.md).
